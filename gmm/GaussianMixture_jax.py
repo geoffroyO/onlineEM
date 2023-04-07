@@ -1,5 +1,5 @@
 from gmm.gmm import GMM
-
+from gmm.gmm import posterior
 from jax import vmap, jit
 import jax.numpy as jnp
 from jax.lax import fori_loop
@@ -136,12 +136,13 @@ class GMMOEM:
         _update_s01 = vmap(update_s01, in_axes=(0, 0, None, None, None))
 
         # Warm-up
-        posterior = jit(vmap(GMM(self.pi, self.mu, self.prec, self.log_det_prec).posterior))
-
+        # posterior = jit(vmap(GMM(self.pi, self.mu, self.prec, self.log_det_prec).posterior))
+        # posterior(y, pi, means, precisions, log_det_precisions, n_features)
+        jit_posterior = jit(vmap(posterior, in_axes=(0, None, None, None, None, None)))
         print('Warm-up...')
-        for batch in tqdm(X_batch[:200]):
+        for batch in tqdm(X_batch[:2]):
             gam = next(gamma)
-            t = posterior(batch)
+            t = jit_posterior(batch, self.pi, self.mu, self.prec, self.log_det_prec, n_features)
             s0, s1 = _update_s01(batch, t, self.s0, self.s1, gam)
             self.s0 = s0.mean(axis=0)
             self.s1 = s1.mean(axis=0)
@@ -152,9 +153,9 @@ class GMMOEM:
             _, _, self.inv_S2, self.log_det_inv_S2, _, _ = fori_loop(lower, upper, update_S2, val)
 
         print('Training...')
-        for batch in tqdm(X_batch[200:]):
-            posterior = jit(vmap(GMM(self.pi, self.mu, self.prec, self.log_det_prec).posterior))
-            t = posterior(batch)
+        for batch in tqdm(X_batch[2:]):
+            # posterior = jit(vmap(GMM(self.pi, self.mu, self.prec, self.log_det_prec).posterior))
+            t = jit_posterior(batch, self.pi, self.mu, self.prec, self.log_det_prec, n_features)
             gam = next(gamma)
 
             s0, s1 = _update_s01(batch, t, self.s0, self.s1, gam)

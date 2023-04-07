@@ -42,3 +42,16 @@ class GMM:
     def logpdf(self, y):
         log_prob_norm, _ = self._estimate_log_prob_resp(y)
         return log_prob_norm
+
+
+def posterior(y, pi, means, precisions, log_det_precisions, n_features):
+    norm = 0.5 * (log_det_precisions - n_features * jnp.log(2 * jnp.pi))
+    diff_tmp = y - means
+    dot_tmp = vmap(jnp.dot, (0, 0))
+    log_prob = dot_tmp(diff_tmp, dot_tmp(precisions, diff_tmp))
+    weighted_log_prob = norm - 0.5 * log_prob + jnp.log(pi)
+    log_prob_norm = logsumexp(weighted_log_prob)
+    log_resp = weighted_log_prob - log_prob_norm
+
+    return jnp.exp(log_resp)
+
