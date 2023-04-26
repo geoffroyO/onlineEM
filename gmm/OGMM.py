@@ -3,14 +3,15 @@ from jax import vmap, jit
 from jax.scipy.special import logsumexp
 
 from jax.lax import fori_loop 
-
+import jax
 from sklearn.mixture import GaussianMixture
 
 from functools import partial
 
 @partial(vmap, in_axes=(0, None, None, None, None))
 def posterior(y, pi, means, covariances, n_features):
-    precisions, log_det_precisions = jnp.linalg.inv(covariances), jnp.log(jnp.linalg.det(covariances))
+    precisions = jnp.linalg.inv(covariances)
+    log_det_precisions = jnp.log(jnp.linalg.det(precisions))
     norm = 0.5 * (log_det_precisions - n_features * jnp.log(2 * jnp.pi))
     diff_tmp = y - means
     dot_tmp = vmap(jnp.dot, (0, 0))
@@ -22,7 +23,8 @@ def posterior(y, pi, means, covariances, n_features):
 
 @partial(vmap, in_axes=(0, None, None, None, None))
 def log_prob(y, pi, means, covariances, n_features):
-    precisions, log_det_precisions = jnp.linalg.inv(covariances), jnp.log(jnp.linalg.det(covariances))
+    precisions = jnp.linalg.inv(covariances)
+    log_det_precisions = jnp.log(jnp.linalg.det(precisions))
     norm = 0.5 * (log_det_precisions - n_features * jnp.log(2 * jnp.pi))
     diff_tmp = y - means
     dot_tmp = vmap(jnp.dot, (0, 0))
@@ -118,6 +120,13 @@ def predict(X, pi, mu, sigma):
 def log_like(X, pi, mu, sigma):
     _, n_features = mu.shape
     return log_prob(X, pi, mu, sigma, n_features)
+
+def BIC(X, pi, mu, sigma):
+    N = X.shape[0]
+    n_components, n_features = mu.shape
+    L = log_like(X, pi, mu, sigma).sum()
+    p = n_features * n_components + n_components * (n_components + 1) / 2
+    return - 2 * L + p * jnp.log(N)
 
 def fit(X, n_components, batch_size):
     X_batch, pi, mu, sigma = _initialization(X, n_components, batch_size)
