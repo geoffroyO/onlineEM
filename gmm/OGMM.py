@@ -1,9 +1,9 @@
 import jax.numpy as jnp
 from jax import vmap, jit
 from jax.scipy.special import logsumexp
-
+from jax.scipy.linalg import eigh
 from jax.lax import fori_loop 
-import jax
+
 from sklearn.mixture import GaussianMixture
 
 from functools import partial
@@ -120,6 +120,17 @@ def predict(X, pi, mu, sigma):
 def log_like(X, pi, mu, sigma):
     _, n_features = mu.shape
     return log_prob(X, pi, mu, sigma, n_features)
+
+@partial(vmap, in_axes=(0, None, None, 0))
+def _weights_gmm(y, means, covariances, t):
+    A, D = eigh(covariances)
+    delta =  A / jnp.einsum('kij,ki->kj', D, y - means) 
+    return jnp.einsum('k,ki->i', t, delta).max()
+@jit
+def weights_gmm(X, pi, means, covariances):
+    n_features = X.shape[-1]
+    t = posterior(X, pi, means, covariances, n_features)
+    return _weights_gmm(X, means, covariances, t)
 
 def BIC(X, pi, mu, sigma):
     N = X.shape[0]
