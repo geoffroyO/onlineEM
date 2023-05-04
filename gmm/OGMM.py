@@ -124,7 +124,7 @@ def log_like(X, pi, mu, sigma):
 @partial(vmap, in_axes=(0, None, None, 0))
 def _weights_gmm(y, means, covariances, t):
     A, D = eigh(covariances)
-    delta =  A / jnp.einsum('kij,ki->kj', D, y - means) 
+    delta =  A / jnp.einsum('kij,ki->kj', D, y - means) ** 2
     return jnp.einsum('k,ki->i', t, delta).max()
 @jit
 def weights_gmm(X, pi, means, covariances):
