@@ -50,10 +50,15 @@ def update_stat(y, t, s0, s1, S2, gam):
     S2 = gam * jnp.einsum('k,ij->kij', t, yyT) + (1 - gam) * S2
     return s0, s1, S2
 
+def fill_diagonal(a, val):
+    i, j = jnp.diag_indices(min(a.shape[-2:]))
+    return a.at[..., i, j].set(val)
+
 def update_params(s0, s1, S2):
     pi = s0 / s0.sum()
     mu = s1 / s0[:, jnp.newaxis]
     sigma = S2 / s0[:, jnp.newaxis, jnp.newaxis] - jnp.einsum('ki,kj->kij', mu, mu)
+    sigma = fill_diagonal(sigma, vmap(jnp.diagonal, in_axes=(0))(sigma) + 1e-6)
     return pi, mu, sigma
 
 def _initialization(X, n_components, batch_size, n_first=1000):
@@ -88,7 +93,7 @@ def _fit(X_batch, pi, mu, sigma):
 
     init_val = (X_batch, s0, s1, S2, pi, mu, sigma, n_features)
     _, s0, s1, S2, _, _, _, _ = fori_loop(0, 200, warmup_step, init_val)
-
+    
     # Training
     def training_step(k, val):
         X, s0, s1, S2, pi, mu, sigma, n_features = val
@@ -99,7 +104,7 @@ def _fit(X_batch, pi, mu, sigma):
         t = posterior(y, pi, mu, sigma, n_features)
         s0, s1, S2 = update_stat(y, t, s0, s1, S2, gam)
         s0, s1, S2 = s0.mean(axis=0), s1.mean(axis=0), S2.mean(axis=0)
-
+        
         # Update parameters
         pi, mu, sigma = update_params(s0, s1, S2)
 
