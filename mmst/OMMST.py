@@ -6,7 +6,7 @@ from jax.scipy.special import digamma, gammaln, logsumexp
 import jax.numpy as jnp
 from jax.lax import fori_loop, while_loop
 
-from manifold_jax import norm, inner_product, transport, beta_polak_ribiere, riemannian_gradient, line_search
+from manifold import norm, inner_product, transport, beta_polak_ribiere, riemannian_gradient, line_search
 
 from root_finding import brentq
 

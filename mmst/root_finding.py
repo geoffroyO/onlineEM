@@ -4,7 +4,7 @@ import jax.numpy as jnp
 ECONVERGED = 0
 ECONVERR = -1
 
-def jax_brentq(f):
+def brentq(f):
   rtol = 4 * jnp.finfo(jnp.float64).eps
 
   def x(a, b, args=(), xtol=2e-14, maxiter=200):
