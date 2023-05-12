@@ -8,7 +8,7 @@ from jax.lax import fori_loop, while_loop
 
 from manifold_jax import norm, inner_product, transport, beta_polak_ribiere, riemannian_gradient, line_search
 
-from brentq import jax_brentq
+from root_finding import brentq
 
 from sklearn.mixture import GaussianMixture
 
@@ -100,7 +100,7 @@ def update_A(v, D, S2, s3):
     return jnp.diagonal(tmp, 0, -2, -1) - v ** 2 / s3
 
 def update_nu(s3, s4):
-    solver = jax_brentq(lambda x, s3km, s4km: s4km - s3km - digamma(x / 2) + jnp.log(x / 2) + 1)
+    solver = brentq(lambda x, s3km, s4km: s4km - s3km - digamma(x / 2) + jnp.log(x / 2) + 1)
     return solver(0.001, 100, (s3, s4))
 
 def _compute_matQuad(s1, S2, s3):
