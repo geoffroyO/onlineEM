@@ -1,5 +1,5 @@
-# import warnings
-# warnings.filterwarnings("ignore")
+import warnings
+warnings.filterwarnings("ignore")
 
 from jax import vmap, jit
 from jax.scipy.special import digamma, gammaln, logsumexp
@@ -13,8 +13,6 @@ from root_finding import brentq
 from sklearn.mixture import GaussianMixture
 
 from functools import partial
-
-from jax.experimental.host_callback import call
 
 def batch_data(X, batch_size):
     N, _ = X.shape
@@ -266,4 +264,31 @@ def fit(X, n_components, batch_size):
     nu = jnp.array([[5, 5, 5], [5, 5, 5], [5, 5, 5]]).astype(jnp.float64)
     pi, mu, A, D, nu = _fit( X_batch, pi, mu, A, D, nu)
     return {'weights': pi, 'means': mu, 'A': A, 'D': D, 'nu': nu}
+
+@jit
+def predict(X, pi, mu, A, D, nu):
+    t = posterior(X, pi, mu, A, D, nu)
+    return jnp.argmax(t, axis=-1)
+
+@jit
+@partial(vmap, in_axes=(0, None, None, None, None, None))
+def log_like(y, pi, mu, A, D, nu):
+    return logsumexp(mmst_logpdf(y, pi, mu, A, D, nu))
+
+@jit
+@partial(vmap, in_axes=(0, None, None, None, None, None))
+def weights_mmst(y, pi, mu, A, D, nu):
+    alpha, beta = compute_alpha_beta(y, mu, A, D, nu)
+    u = _u(alpha, beta)
+    tmp = mmst_logpdf(y, pi, mu, A, D, nu)
+    t = jnp.exp(tmp - logsumexp(tmp, axis=0))
+    w = jnp.einsum('k,ki->i', t, u)
+    return jnp.max(w)
+
+def BIC(X, pi, mu, A, D, nu):
+    N = X.shape[0]
+    n_components, n_features = mu.shape
+    L = log_like(X, pi, mu, A, D, nu).sum()
+    p = n_components * (1 + (n_features * (n_features + 5)) / 2) - 1
+    return - 2 * L + p * jnp.log(N)
 
