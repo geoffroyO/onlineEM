@@ -1,6 +1,7 @@
 import warnings
 warnings.filterwarnings("ignore")
 
+import jax
 from jax import vmap, jit
 from jax.scipy.special import digamma, gammaln, logsumexp
 import jax.numpy as jnp
@@ -255,13 +256,13 @@ def _fit(X_batch, pi, mu, A, D, nu):
 def fit(X, n_components, batch_size):
     import numpy as np
     X_batch, pi, mu, A, D, nu = _initialization(X, n_components, batch_size)
-    def rot(theta):
-        return jnp.array([[1, 0, 0], [0, jnp.cos(theta), jnp.sin(theta)], [0, -jnp.sin(theta), jnp.cos(theta)]])
-    pi = jnp.array([.1, .4, .5]).astype(jnp.float64)
-    mu = jnp.array([[0, 0, 0], [1, 3, 1], [2, 2, 2]]).astype(jnp.float64)
-    A = jnp.array([[1, 2, 5], [1, 3, 1], [2, 2, 2]]).astype(jnp.float64)
-    D = jnp.array([rot(0), rot(0), rot(0)]).astype(jnp.float64)
-    nu = jnp.array([[5, 5, 5], [5, 5, 5], [5, 5, 5]]).astype(jnp.float64)
+    # def rot(theta):
+    #     return jnp.array([[1, 0, 0], [0, jnp.cos(theta), jnp.sin(theta)], [0, -jnp.sin(theta), jnp.cos(theta)]])
+    # pi = jnp.array([.1, .4, .5]).astype(jnp.float64)
+    # mu = jnp.array([[0, 0, 0, -5], [1, 3, 1, 2], [2, 2, 2, 4]]).astype(jnp.float64)
+    # A = jnp.array([[1, 2, 5, 10], [1, 3, 1, 2], [2, 2, 2, 5]]).astype(jnp.float64)
+    # D = jnp.array([np.linalg.qr(np.random.normal(size=(4, 4)))[0]]*3).astype(jnp.float64)
+    # nu = jnp.array([[5, 5, 5, 5], [5, 5, 5, 2], [5, 5, 5, 10]]).astype(jnp.float64)
     pi, mu, A, D, nu = _fit( X_batch, pi, mu, A, D, nu)
     return {'weights': pi, 'means': mu, 'A': A, 'D': D, 'nu': nu}
 
@@ -291,4 +292,24 @@ def BIC(X, pi, mu, A, D, nu):
     L = log_like(X, pi, mu, A, D, nu).sum()
     p = n_components * (1 + (n_features * (n_features + 5)) / 2) - 1
     return - 2 * L + p * jnp.log(N)
+
+def sample_mst(N, muk, Ak, Dk, nuk, key):
+    M = nuk.shape[0]
+    X = jax.random.normal(key, shape=(N, M))
+    W = jax.random.gamma(key, nuk, shape=(N, M))
+    X /= jnp.sqrt(W)
+    matAk = jnp.diag(jnp.sqrt(Ak))
+    coef = Dk@matAk
+    return muk + jnp.einsum('ij,kj->ki', coef, X)
+
+def sample_mmst(N, pi, mu, A, D, nu, key):
+    samples = []
+    cluster = []
+    for k in range(len(pi)):
+        N_tmp = int(N*pi[k])
+        samples.append(sample_mst(N_tmp, mu[k], A[k], D[k], nu[k], key))
+        cluster += [k] * N_tmp
+    samples = jnp.concatenate(samples)
+    shuffle = jax.random.permutation(key, N)
+    return samples[shuffle], jnp.array(cluster)[shuffle]
 
