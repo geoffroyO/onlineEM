@@ -9,27 +9,27 @@ from sklearn.mixture import GaussianMixture
 from functools import partial
 
 @partial(vmap, in_axes=(0, None, None, None, None))
-def posterior(y, pi, means, covariances, n_features):
+def posterior(y, weights, means, covariances, n_features):
     precisions = jnp.linalg.inv(covariances)
     log_det_precisions = jnp.log(jnp.linalg.det(precisions))
     norm = 0.5 * (log_det_precisions - n_features * jnp.log(2 * jnp.pi))
     diff_tmp = y - means
     dot_tmp = vmap(jnp.dot, (0, 0))
     log_prob = dot_tmp(diff_tmp, dot_tmp(precisions, diff_tmp))
-    weighted_log_prob = norm - 0.5 * log_prob + jnp.log(pi)
+    weighted_log_prob = norm - 0.5 * log_prob + jnp.log(weights)
     log_prob_norm = logsumexp(weighted_log_prob)
     log_resp = weighted_log_prob - log_prob_norm
     return jnp.exp(log_resp)
 
 @partial(vmap, in_axes=(0, None, None, None, None))
-def log_prob(y, pi, means, covariances, n_features):
+def log_prob(y, weights, means, covariances, n_features):
     precisions = jnp.linalg.inv(covariances)
     log_det_precisions = jnp.log(jnp.linalg.det(precisions))
     norm = 0.5 * (log_det_precisions - n_features * jnp.log(2 * jnp.pi))
     diff_tmp = y - means
     dot_tmp = vmap(jnp.dot, (0, 0))
     log_prob = dot_tmp(diff_tmp, dot_tmp(precisions, diff_tmp))
-    weighted_log_prob = norm - 0.5 * log_prob + jnp.log(pi)
+    weighted_log_prob = norm - 0.5 * log_prob + jnp.log(weights)
     return logsumexp(weighted_log_prob)
 
 def batch_data(X, batch_size):
@@ -55,76 +55,77 @@ def fill_diagonal(a, val):
     return a.at[..., i, j].set(val)
 
 def update_params(s0, s1, S2):
-    pi = s0 / s0.sum()
-    mu = s1 / s0[:, jnp.newaxis]
-    sigma = S2 / s0[:, jnp.newaxis, jnp.newaxis] - jnp.einsum('ki,kj->kij', mu, mu)
-    sigma = fill_diagonal(sigma, vmap(jnp.diagonal, in_axes=(0))(sigma) + 1e-6)
-    return pi, mu, sigma
+    weights = s0 / s0.sum()
+    means = s1 / s0[:, jnp.newaxis]
+    covariances = S2 / s0[:, jnp.newaxis, jnp.newaxis] - jnp.einsum('ki,kj->kij', means, means)
+    covariances = fill_diagonal(covariances, vmap(jnp.diagonal, in_axes=(0))(covariances) + 1e-6)
+    return weights, means, covariances
 
 def _initialization(X, n_components, batch_size, n_first=1000):
     gmm = GaussianMixture(n_components, max_iter=1)
     gmm.fit(X[:n_first])
-    pi = jnp.array(gmm.weights_)
-    mu = jnp.array(gmm.means_)
-    sigma = jnp.linalg.inv(gmm.precisions_)
+    weights = jnp.array(gmm.weights_)
+    means = jnp.array(gmm.means_)
+    covariances = jnp.linalg.inv(gmm.precisions_)
     X_batch = batch_data(X, batch_size)
-    return X_batch, pi, mu, sigma
+    return X_batch, weights, means, covariances
+
 @jit
-def _fit(X_batch, pi, mu, sigma):
+def _fit(X_batch, weights, means, covariances):
     N = X_batch.shape[0]
-    n_components, n_features = mu.shape
+    n_components, n_features = means.shape
 
     s0 = jnp.zeros(n_components)
-    s1 = jnp.zeros(mu.shape)
+    s1 = jnp.zeros(means.shape)
     S2 = jnp.stack([jnp.diag(jnp.ones(n_features))] * n_components)
 
     # Warm-up
     def warmup_step(k, val):
-        X, s0, s1, S2, pi, mu, sigma, n_features = val
+        X, s0, s1, S2, weights, means, covariances, n_features = val
         y = jnp.take(X, k, axis=0)
 
         # Update statistics
         gam = gamma(k)
-        t = posterior(y, pi, mu, sigma, n_features)
+        t = posterior(y, weights, means, covariances, n_features)
         s0, s1, S2 = update_stat(y, t, s0, s1, S2, gam)
         s0, s1, S2 = s0.mean(axis=0), s1.mean(axis=0), S2.mean(axis=0)
 
-        return X, s0, s1, S2, pi, mu, sigma, n_features
+        return X, s0, s1, S2, weights, means, covariances, n_features
 
-    init_val = (X_batch, s0, s1, S2, pi, mu, sigma, n_features)
+    init_val = (X_batch, s0, s1, S2, weights, means, covariances, n_features)
     _, s0, s1, S2, _, _, _, _ = fori_loop(0, 200, warmup_step, init_val)
     
     # Training
     def training_step(k, val):
-        X, s0, s1, S2, pi, mu, sigma, n_features = val
+        X, s0, s1, S2, weights, means, covariances, n_features = val
         y = jnp.take(X, k, axis=0)
 
         # Update statistics
         gam = gamma(k)
-        t = posterior(y, pi, mu, sigma, n_features)
+        t = posterior(y, weights, means, covariances, n_features)
         s0, s1, S2 = update_stat(y, t, s0, s1, S2, gam)
         s0, s1, S2 = s0.mean(axis=0), s1.mean(axis=0), S2.mean(axis=0)
-        
+
         # Update parameters
-        pi, mu, sigma = update_params(s0, s1, S2)
+        weights, means, covariances = update_params(s0, s1, S2)
 
-        return X, s0, s1, S2, pi, mu, sigma, n_features
+        return X, s0, s1, S2, weights, means, covariances, n_features
 
-    init_val = (X_batch, s0, s1, S2, pi, mu, sigma, n_features)
-    _, s0, s1, S2, pi, mu, sigma, _ = fori_loop(200, N, training_step, init_val)
+    init_val = (X_batch, s0, s1, S2, weights, means, covariances, n_features)
+    _, s0, s1, S2, weights, means, covariances, _ = fori_loop(200, N, training_step, init_val)
 
-    return pi, mu, sigma
+    return weights, means, covariances
 
 @jit
-def predict(X, pi, mu, sigma):
-    _, n_features = mu.shape
-    t = posterior(X, pi, mu, sigma, n_features)
+def predict(X, weights, means, covariances):
+    _, n_features = means.shape
+    t = posterior(X, weights, means, covariances, n_features)
     return jnp.argmax(t, axis=-1)
 
 @jit
-def log_like(X, pi, mu, sigma):
-    _, n_features = mu.shape
-    return log_prob(X, pi, mu, sigma, n_features)
+def log_like(X, weights, means, covariances):
+    _, n_features = means.shape
+    return log_prob(X, weights, means, covariances, n_features)
 
 @partial(vmap, in_axes=(0, None, None, 0))
 def _weights_gmm(y, means, covariances, t):
@@ -132,18 +133,19 @@ def _weights_gmm(y, means, covariances, t):
     delta =  A / jnp.einsum('kij,ki->kj', D, y - means) ** 2
     return jnp.einsum('k,ki->i', t, delta).max()
 @jit
-def weights_gmm(X, pi, means, covariances):
+def weights_gmm(X, weights, means, covariances):
     n_features = X.shape[-1]
-    t = posterior(X, pi, means, covariances, n_features)
+    t = posterior(X, weights, means, covariances, n_features)
     return _weights_gmm(X, means, covariances, t)
 
-def BIC(X, pi, mu, sigma):
+def BIC(X, weights, means, covariances):
     N = X.shape[0]
-    n_components, n_features = mu.shape
-    L = log_like(X, pi, mu, sigma).sum()
+    n_components, n_features = means.shape
+    L = log_like(X, weights, means, covariances).sum()
     p = n_features * n_components + n_components * (n_components + 1) / 2
     return - 2 * L + p * jnp.log(N)
 
 def fit(X, n_components, batch_size):
-    X_batch, pi, mu, sigma = _initialization(X, n_components, batch_size)
-    return _fit(X_batch, pi, mu, sigma)
+    X_batch, weights, means, covariances = _initialization(X, n_components, batch_size)
+    weights, means, covariances = _fit(X_batch, weights, means, covariances)
+    return {'weights': weights, 'means': means, 'covariances': covariances}

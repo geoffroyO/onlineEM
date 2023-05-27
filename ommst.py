@@ -196,11 +196,11 @@ def update_params(s0, s1, S2, s3, s4, D):
     return pi, mu, A, D, nu
 
 def _initialization(X, n_components, batch_size, n_first=1000):
-    gmm = GaussianMixture(n_components, max_iter=1)
+    gmm = GaussianMixture(n_components, max_iter=5)
     gmm.fit(X[:n_first])
     pi = jnp.array(gmm.weights_)
     mu = jnp.array(gmm.means_)
-    covariances = jnp.linalg.inv(gmm.precisions_)
+    covariances = gmm.covariances_
     A, D = vmap(jnp.linalg.eig, in_axes=(0))(covariances)
     A = A.astype(jnp.float32)
     D = D.astype(jnp.float32)
