@@ -73,7 +73,7 @@ def update_stat(y, t, mu, A, D, nu, s0, s1, S2, s3, s4, gam):
 
     s0 = gam * t + (1 - gam) * s0
     s1 = gam * jnp.einsum('ij,k->ijk', t_u, y) + (1 - gam) * s1
-    S2 = gam * jnp.einsum('ij,kl->ijkl', t_u, y_mat) + (1 - gam) * S2
+    S2 = gam * jnp.einsum('ij,kl->ijkl', t_u, y_mat) + (1 - gam) * S2 + 1e-6
     s3 = gam * t_u + (1 - gam) * s3
     s4 = gam * t_u_tilde + (1 - gam) * s4
 
@@ -174,7 +174,7 @@ def update_D(x, mat_quad_k):
 
 def update_params(s0, s1, S2, s3, s4, D):
     s10 = jnp.einsum('kij,k->kij', s1, 1/s0)
-    S20 = jnp.einsum('kmij,k->kmij', S2, 1/s0) + 1e-6
+    S20 = jnp.einsum('kmij,k->kmij', S2, 1/s0)
     s30 = jnp.einsum('ki,k->ki', s3, 1/s0)
     s40 = jnp.einsum('ki,k->ki', s4, 1/s0)
 
