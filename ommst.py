@@ -174,7 +174,7 @@ def update_D(x, mat_quad_k):
 
 def update_params(s0, s1, S2, s3, s4, D):
     s10 = jnp.einsum('kij,k->kij', s1, 1/s0)
-    S20 = jnp.einsum('kmij,k->kmij', S2, 1/s0)
+    S20 = jnp.einsum('kmij,k->kmij', S2, 1/s0) + 1e-6
     s30 = jnp.einsum('ki,k->ki', s3, 1/s0)
     s40 = jnp.einsum('ki,k->ki', s4, 1/s0)
 
