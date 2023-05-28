@@ -19,7 +19,7 @@ def batch_data(X, batch_size):
     N, _ = X.shape
     X_batch = []
     for k in range(N // batch_size):
-        X_batch.append(jnp.array(X[k * batch_size:(k + 1) * batch_size]))
+        X_batch.append(jnp.array(X[k * batch_size:(k + 1) * batch_size]).astype(jnp.float64))
     return jnp.array(X_batch)
 
 def gamma(k):
@@ -198,13 +198,13 @@ def update_params(s0, s1, S2, s3, s4, D):
 def _initialization(X, n_components, batch_size, n_first=1000):
     gmm = GaussianMixture(n_components, max_iter=5)
     gmm.fit(X[:n_first])
-    pi = jnp.array(gmm.weights_)
-    mu = jnp.array(gmm.means_)
+    pi = jnp.array(gmm.weights_).astype(jnp.float64)
+    mu = jnp.array(gmm.means_).astype(jnp.float64)
     covariances = gmm.covariances_
     A, D = vmap(jnp.linalg.eig, in_axes=(0))(covariances)
-    A = A.astype(jnp.float32)
-    D = D.astype(jnp.float32)
-    nu = jnp.full(A.shape, 10.)
+    A = A.astype(jnp.float64)
+    D = D.astype(jnp.float64)
+    nu = jnp.full(A.shape, 10.).astype(jnp.float64)
     X_batch = batch_data(X, batch_size)
     return X_batch, pi, mu, A, D, nu
 
@@ -264,7 +264,7 @@ def fit(X, n_components, batch_size):
     # D = jnp.array([np.linalg.qr(np.random.normal(size=(4, 4)))[0]]*3).astype(jnp.float64)
     # nu = jnp.array([[5, 5, 5, 5], [5, 5, 5, 2], [5, 5, 5, 10]]).astype(jnp.float64)
     pi, mu, A, D, nu = _fit( X_batch, pi, mu, A, D, nu)
-    return {'weights': pi, 'means': mu, 'A': A, 'D': D, 'nu': nu}
+    return pi, mu, A, D, nu 
 
 @jit
 def predict(X, pi, mu, A, D, nu):
