@@ -264,32 +264,32 @@ def fit(X, n_components, batch_size):
     # D = jnp.array([np.linalg.qr(np.random.normal(size=(4, 4)))[0]]*3).astype(jnp.float64)
     # nu = jnp.array([[5, 5, 5, 5], [5, 5, 5, 2], [5, 5, 5, 10]]).astype(jnp.float64)
     pi, mu, A, D, nu = _fit( X_batch, pi, mu, A, D, nu)
-    return pi, mu, A, D, nu 
+    return {'weights': pi, 'means': mu, 'A': A, 'D': D, 'nu': nu}
 
 @jit
-def predict(X, pi, mu, A, D, nu):
-    t = posterior(X, pi, mu, A, D, nu)
+def predict(X, weights, means, A, D, nu):
+    t = posterior(X, weights, means, A, D, nu)
     return jnp.argmax(t, axis=-1)
 
 @jit
 @partial(vmap, in_axes=(0, None, None, None, None, None))
-def log_like(y, pi, mu, A, D, nu):
-    return logsumexp(mmst_logpdf(y, pi, mu, A, D, nu))
+def log_like(y, weights, means, A, D, nu):
+    return logsumexp(mmst_logpdf(y, weights, means, A, D, nu))
 
 @jit
 @partial(vmap, in_axes=(0, None, None, None, None, None))
-def weights_mmst(y, pi, mu, A, D, nu):
-    alpha, beta = compute_alpha_beta(y, mu, A, D, nu)
+def weights_mmst(y, weights, means, A, D, nu):
+    alpha, beta = compute_alpha_beta(y, means, A, D, nu)
     u = _u(alpha, beta)
-    tmp = mmst_logpdf(y, pi, mu, A, D, nu)
+    tmp = mmst_logpdf(y, weights, means, A, D, nu)
     t = jnp.exp(tmp - logsumexp(tmp, axis=0))
     w = jnp.einsum('k,ki->i', t, u)
     return jnp.max(w)
 
-def BIC(X, pi, mu, A, D, nu):
+def BIC(X, weights, means, A, D, nu):
     N = X.shape[0]
-    n_components, n_features = mu.shape
-    L = log_like(X, pi, mu, A, D, nu).sum()
+    n_components, n_features = means.shape
+    L = log_like(X, weights, means, A, D, nu).sum()
     p = n_components * (1 + (n_features * (n_features + 5)) / 2) - 1
     return - 2 * L + p * jnp.log(N)
 
@@ -302,12 +302,12 @@ def sample_mst(N, muk, Ak, Dk, nuk, key):
     coef = Dk@matAk
     return muk + jnp.einsum('ij,kj->ki', coef, X)
 
-def sample_mmst(N, pi, mu, A, D, nu, key):
+def sample_mmst(N, weights, means, A, D, nu, key):
     samples = []
     cluster = []
-    for k in range(len(pi)):
-        N_tmp = int(N*pi[k])
-        samples.append(sample_mst(N_tmp, mu[k], A[k], D[k], nu[k], key))
+    for k in range(len(weights)):
+        N_tmp = int(N*weights[k])
+        samples.append(sample_mst(N_tmp, means[k], A[k], D[k], nu[k], key))
         cluster += [k] * N_tmp
     samples = jnp.concatenate(samples)
     shuffle = jax.random.permutation(key, N)
