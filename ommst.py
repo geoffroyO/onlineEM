@@ -263,7 +263,7 @@ def fit(X, n_components, batch_size):
     # A = jnp.array([[1, 2, 5, 10], [1, 3, 1, 2], [2, 2, 2, 5]]).astype(jnp.float64)
     # D = jnp.array([np.linalg.qr(np.random.normal(size=(4, 4)))[0]]*3).astype(jnp.float64)
     # nu = jnp.array([[5, 5, 5, 5], [5, 5, 5, 2], [5, 5, 5, 10]]).astype(jnp.float64)
-    pi, mu, A, D, nu = _fit( X_batch, pi, mu, A, D, nu)
+    pi, mu, A, D, nu = _fit(X_batch, pi, mu, A, D, nu)
     return {'weights': pi, 'means': mu, 'A': A, 'D': D, 'nu': nu}
 
 @jit
@@ -273,18 +273,24 @@ def predict(X, weights, means, A, D, nu):
 
 @jit
 @partial(vmap, in_axes=(0, None, None, None, None, None))
-def log_like(y, weights, means, A, D, nu):
+def _log_like(y, weights, means, A, D, nu):
     return logsumexp(mmst_logpdf(y, weights, means, A, D, nu))
+
+def log_like(X, weights, means, A, D, nu):
+    return _log_like(X, weights, means, A, D, nu)
 
 @jit
 @partial(vmap, in_axes=(0, None, None, None, None, None))
-def weights_mmst(y, weights, means, A, D, nu):
+def _weights_mmst(y, weights, means, A, D, nu):
     alpha, beta = compute_alpha_beta(y, means, A, D, nu)
     u = _u(alpha, beta)
     tmp = mmst_logpdf(y, weights, means, A, D, nu)
     t = jnp.exp(tmp - logsumexp(tmp, axis=0))
     w = jnp.einsum('k,ki->i', t, u)
     return jnp.max(w)
+
+def weights_mmst(y, weights, means, A, D, nu):
+    return _weights_mmst(y, weights, means, A, D, nu)
 
 def BIC(X, weights, means, A, D, nu):
     N = X.shape[0]
