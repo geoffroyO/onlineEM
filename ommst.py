@@ -61,6 +61,10 @@ def _u(alpha, beta):
 def _u_tilde(alpha, beta):
     return digamma(alpha) - jnp.log(beta)
 
+def fill_diagonal(a, val):
+    i, j = jnp.diag_indices(min(a.shape[-2:]))
+    return a.at[..., i, j].set(val)
+
 @partial(vmap, in_axes=(0, 0, None, None, None, None, None, None, None, None, None, None))
 def update_stat(y, t, mu, A, D, nu, s0, s1, S2, s3, s4, gam):
     alpha, beta = compute_alpha_beta(y, mu, A, D, nu)
@@ -73,7 +77,8 @@ def update_stat(y, t, mu, A, D, nu, s0, s1, S2, s3, s4, gam):
 
     s0 = gam * t + (1 - gam) * s0
     s1 = gam * jnp.einsum('ij,k->ijk', t_u, y) + (1 - gam) * s1
-    S2 = gam * jnp.einsum('ij,kl->ijkl', t_u, y_mat) + (1 - gam) * S2 + 1e-6
+    S2 = gam * jnp.einsum('ij,kl->ijkl', t_u, y_mat) + (1 - gam) * S2 
+    S2 = fill_diagonal(S2, vmap(jnp.diagonal, in_axes=(0))(S2) + 1e-6)
     s3 = gam * t_u + (1 - gam) * s3
     s4 = gam * t_u_tilde + (1 - gam) * s4
 
@@ -202,7 +207,7 @@ def _initialization(X, n_components, batch_size, n_first=1000):
     mu = jnp.array(gmm.means_).astype(jnp.float64)
     covariances = gmm.covariances_
     A, D = vmap(jnp.linalg.eig, in_axes=(0))(covariances)
-    A = A.astype(jnp.float64)
+    A = A.astype(jnp.float64) + 1e-6
     D = D.astype(jnp.float64)
     nu = jnp.full(A.shape, 10.).astype(jnp.float64)
     X_batch = batch_data(X, batch_size)
