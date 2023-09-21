@@ -134,7 +134,7 @@ def _fit(X, X_idx, N, M, polyak, params):
     return params
 
 
-def fit(X, n_components, N, M, batch_size, polyak):
+def fit(X, n_components, M, N, batch_size, polyak):
     params = _initialization(X, n_components)
     X_idx = jnp.array(np.random.randint(len(X), size=(N, batch_size, )))
     params = _fit(X, X_idx, N, M, polyak, params)
