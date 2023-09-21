@@ -1,11 +1,12 @@
 """Online EM for Multiple-Scale t-distribution."""
+import copy
 import warnings
 from functools import partial
 
 import jax
 import jax.numpy as jnp
 from jax import grad, jit, tree_map, vmap
-from jax.lax import fori_loop, while_loop
+from jax.lax import cond, fori_loop, while_loop
 from jax.scipy.special import digamma, gammaln, logsumexp
 
 from jax_tqdm import loop_tqdm
@@ -202,7 +203,7 @@ def update_D(params, stat):
     return x
 
 
-def update_params(params, stat, N, k, polyak):
+def update_params(params, stat):
     stat_updt = {}
     stat_updt['s0'] = stat['s0']
     stat_updt['s1'] = jnp.einsum('kij,k->kij', stat['s1'], 1/stat['s0'])
@@ -210,31 +211,11 @@ def update_params(params, stat, N, k, polyak):
     stat_updt['s3'] = jnp.einsum('ki,k->ki', stat['s3'], 1/stat['s0'])
     stat_updt['s4'] = jnp.einsum('ki,k->ki', stat['s4'], 1/stat['s0'])
 
-    fact_polyak = 1 / (N - polyak + 1)
-    pi = update_pi(stat_updt)
-    params['pi'] = jax.lax.cond(k >= polyak,
-                                lambda x: (1 - fact_polyak) * params['pi'] +
-                                fact_polyak * x, lambda x: x, pi)
-
-    D = update_D(params, stat_updt)
-    params['D'] = jax.lax.cond(k >= polyak,
-                               lambda x: (1 - fact_polyak) * params['D'] +
-                               fact_polyak * x, lambda x: x, D)
-
-    mu, v = update_mu(params, stat_updt)
-    params['mu'] = jax.lax.cond(k >= polyak,
-                                lambda x: (1 - fact_polyak) * params['mu'] +
-                                fact_polyak * x, lambda x: x, mu)
-
-    A = update_A(v, params, stat_updt)
-    params['A'] = jax.lax.cond(k >= polyak,
-                               lambda x: (1 - fact_polyak) * params['A'] +
-                               fact_polyak * x, lambda x: x, A)
-
-    nu = update_nu(stat_updt)
-    params['nu'] = jax.lax.cond(k >= polyak,
-                                lambda x: (1 - fact_polyak) * params['nu'] +
-                                fact_polyak * x, lambda x: x, nu)
+    params['pi'] = update_pi(stat_updt)
+    params['D'] = update_D(params, stat_updt)
+    params['mu'], v = update_mu(params, stat_updt)
+    params['A'] = update_A(v, params, stat_updt)
+    params['nu'] = update_nu(stat_updt)
 
     return params
 
@@ -251,10 +232,11 @@ def _initialization(X, n_components, n_first=1000):
     nu = jnp.full(A.shape, 10.).astype(jnp.float64)
 
     params = {'pi': pi, 'mu': mu, 'A': A, 'D': D, 'nu': nu}
-    return params
+    params_polyak = tree_map(lambda x: copy.deepcopy(x), params)
+    return params, params_polyak
 
 
-def _fit(X, X_idx, M, N, polyak, params):
+def _fit(X, X_idx, M, N, polyak, params, params_polyak):
     stat = {}
     stat['s0'] = jnp.zeros(params['pi'].shape)
     stat['s1'] = jnp.zeros(params['D'].shape)
@@ -272,41 +254,44 @@ def _fit(X, X_idx, M, N, polyak, params):
         # Update statistics
         gam = gamma(k)
         t = posterior(Y, params)
-        tmp_stat = tree_map(lambda s: s.mean(axis=0),
+        stat = tree_map(lambda s: s.mean(axis=0),
                             update_stat(Y, t, params, stat, gam))
-        return params, tmp_stat
+        return params, stat
     init_val = (params, stat)
     _, stat = fori_loop(0, 2 * M, warmup_step, init_val)
 
     # Training
     @loop_tqdm(N)
     def training_step(k, val):
-        params, stat = val
+        params, params_polyak, stat = val
         y_idx = jnp.take(X_idx, k, axis=0)
         Y = jnp.take(X, y_idx, axis=0)
 
         # Update statistics
         gam = gamma(k)
         t = posterior(Y, params)
-        tmp_stat = tree_map(lambda s: s.mean(axis=0),
+        stat = tree_map(lambda s: s.mean(axis=0),
                             update_stat(Y, t, params, stat, gam))
 
         # Update parameters
-        params = update_params(params, tmp_stat, N, k, polyak)
+        params = update_params(params, stat)
+        params_polyak = cond(k > polyak,
+                             lambda X, Y: tree_map(lambda x, y: x+y, X, Y),
+                             lambda X, _: tree_map(lambda x: copy.deepcopy(x), X),
+                             params, params_polyak)
+        return params, params_polyak, stat
 
-        return params, tmp_stat
-
-    val = (params, stat)
-    params, _ = fori_loop(0, N, training_step, val)
-
-    return params
+    val = (params, params_polyak,  stat)
+    _, params_polyak, _ = fori_loop(0, N, training_step, val)
+    params_polyak = tree_map(lambda x: x / (N - polyak + 1), params_polyak)
+    return params_polyak
 
 
 def fit(X, n_components, M, N, batch_size, polyak):
-    params = _initialization(X, n_components)
+    params, params_polyak = _initialization(X, n_components)
     X_idx = jnp.array(np.random.randint(len(X), size=(N, batch_size, )))
-    params = _fit(X, X_idx, M, N, polyak, params)
-    return params
+    params_polyak = _fit(X, X_idx, M, N, polyak, params, params_polyak)
+    return params_polyak
 
 
 @jit

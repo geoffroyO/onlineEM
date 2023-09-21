@@ -1,4 +1,5 @@
 """Online EM for Gaussian Mixtures."""
+import copy
 from functools import partial
 
 import jax.numpy as jnp
@@ -58,25 +59,13 @@ def fill_diagonal(a, val):
     return a.at[..., i, j].set(val)
 
 
-def update_params(stat, params, N, k, polyak):
-    fact_polyak = 1 / (N - polyak + 1)
-
-    pi = stat['s0'] / stat['s0'].sum()
-    params['pi'] = cond(k >= polyak,
-                        lambda x: (1 - fact_polyak) * params['pi'] +
-                        fact_polyak * x, lambda x: x, pi)
-
-    mu = jnp.einsum('kj,k->kj', stat['s1'], 1/stat['s0'])
-    params['mu'] = cond(k >= polyak,
-                        lambda x: (1 - fact_polyak) * params['mu'] +
-                        fact_polyak * x, lambda x: x, mu)
-
-    cov = jnp.einsum('kij,k->kij', stat['S2'], 1/stat['s0']) - \
+def update_params(stat, params):
+    params['pi'] = stat['s0'] / stat['s0'].sum()
+    params['mu'] = jnp.einsum('kj,k->kj', stat['s1'], 1/stat['s0'])
+    tmp = jnp.einsum('kij,k->kij', stat['S2'], 1/stat['s0']) - \
         jnp.einsum('ki,kj->kij', params['mu'], params['mu'])
-    cov = fill_diagonal(cov, vmap(jnp.diagonal, in_axes=(0))(cov) + 1e-6)
-    params['cov'] = cond(k >= polyak,
-                         lambda x: (1 - fact_polyak) * params['cov'] +
-                         fact_polyak * x, lambda x: x, cov)
+    params['cov'] = fill_diagonal(tmp, vmap(jnp.diagonal, in_axes=(0))(tmp) + 1e-6)
+
     return params
 
 
@@ -87,10 +76,12 @@ def _initialization(X, n_components, n_first=1000):
     params['pi'] = jnp.array(gmm.weights_)
     params['mu'] = jnp.array(gmm.means_)
     params['cov'] = jnp.linalg.inv(gmm.precisions_)
-    return params
+
+    params_polyak = tree_map(lambda x: copy.deepcopy(x), params)
+    return params, params_polyak
 
 
-def _fit(X, X_idx, N, M, polyak, params):
+def _fit(X, X_idx, N, M, polyak, params, params_polyak):
     n_components, n_features = params['mu'].shape
     stat = {}
     stat['s0'] = jnp.zeros(n_components)
@@ -115,7 +106,7 @@ def _fit(X, X_idx, N, M, polyak, params):
 
     @loop_tqdm(N)
     def training_step(k, val):
-        stat, params = val
+        stat, params, params_polyak = val
         y_idx = jnp.take(X_idx, k, axis=0)
         Y = jnp.take(X, y_idx, axis=0)
 
@@ -124,21 +115,26 @@ def _fit(X, X_idx, N, M, polyak, params):
         stat = update_stat(Y, t, stat, gam)
         stat = tree_map(lambda x: x.mean(axis=0), stat)
 
-        params = update_params(stat, params, N, k, polyak)
+        params = update_params(stat, params)
 
-        return stat, params
+        params_polyak = cond(k > polyak,
+                             lambda X, Y: tree_map(lambda x, y: x+y, X, Y),
+                             lambda X, _: tree_map(lambda x: copy.deepcopy(x), X),
+                             params, params_polyak)
 
-    init_val = (stat, params)
-    _, params = fori_loop(0, N, training_step, init_val)
+        return stat, params, params_polyak
 
-    return params
+    init_val = (stat, params, params_polyak)
+    _, _, params_polyak = fori_loop(0, N, training_step, init_val)
+    params_polyak = tree_map(lambda x: x / (N - polyak + 1), params_polyak)
+    return params_polyak
 
 
 def fit(X, n_components, M, N, batch_size, polyak):
-    params = _initialization(X, n_components)
+    params, params_polyak = _initialization(X, n_components)
     X_idx = jnp.array(np.random.randint(len(X), size=(N, batch_size, )))
-    params = _fit(X, X_idx, N, M, polyak, params)
-    return params
+    params_polyak = _fit(X, X_idx, N, M, polyak, params, params_polyak)
+    return params_polyak
 
 
 @jit
