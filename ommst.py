@@ -3,7 +3,6 @@ import copy
 import warnings
 from functools import partial
 
-import jax
 import jax.numpy as jnp
 from jax import grad, jit, tree_map, vmap
 from jax.lax import cond, fori_loop, while_loop
@@ -255,7 +254,7 @@ def _fit(X, X_idx, M, N, polyak, params, params_polyak):
         gam = gamma(k)
         t = posterior(Y, params)
         stat = tree_map(lambda s: s.mean(axis=0),
-                            update_stat(Y, t, params, stat, gam))
+                        update_stat(Y, t, params, stat, gam))
         return params, stat
     init_val = (params, stat)
     _, stat = fori_loop(0, 2 * M, warmup_step, init_val)
@@ -271,13 +270,14 @@ def _fit(X, X_idx, M, N, polyak, params, params_polyak):
         gam = gamma(k)
         t = posterior(Y, params)
         stat = tree_map(lambda s: s.mean(axis=0),
-                            update_stat(Y, t, params, stat, gam))
+                        update_stat(Y, t, params, stat, gam))
 
         # Update parameters
         params = update_params(params, stat)
         params_polyak = cond(k > polyak,
                              lambda X, Y: tree_map(lambda x, y: x+y, X, Y),
-                             lambda X, _: tree_map(lambda x: copy.deepcopy(x), X),
+                             lambda X, _: tree_map(lambda x: copy.deepcopy(x),
+                                                   X),
                              params, params_polyak)
         return params, params_polyak, stat
 

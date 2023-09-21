@@ -64,7 +64,8 @@ def update_params(stat, params):
     params['mu'] = jnp.einsum('kj,k->kj', stat['s1'], 1/stat['s0'])
     tmp = jnp.einsum('kij,k->kij', stat['S2'], 1/stat['s0']) - \
         jnp.einsum('ki,kj->kij', params['mu'], params['mu'])
-    params['cov'] = fill_diagonal(tmp, vmap(jnp.diagonal, in_axes=(0))(tmp) + 1e-6)
+    params['cov'] = fill_diagonal(tmp, vmap(jnp.diagonal,
+                                            in_axes=(0))(tmp) + 1e-6)
 
     return params
 
@@ -119,7 +120,8 @@ def _fit(X, X_idx, N, M, polyak, params, params_polyak):
 
         params_polyak = cond(k > polyak,
                              lambda X, Y: tree_map(lambda x, y: x+y, X, Y),
-                             lambda X, _: tree_map(lambda x: copy.deepcopy(x), X),
+                             lambda X, _: tree_map(lambda x: copy.deepcopy(x),
+                                                   X),
                              params, params_polyak)
 
         return stat, params, params_polyak
