@@ -1,25 +1,27 @@
+"""Online EM for Multiple-Scale t-distribution."""
 import warnings
+from functools import partial
 
 import jax
-from jax import grad, vmap, jit, tree_map
-from jax.scipy.special import digamma, gammaln, logsumexp
 import jax.numpy as jnp
+from jax import grad, jit, tree_map, vmap
 from jax.lax import fori_loop, while_loop
+from jax.scipy.special import digamma, gammaln, logsumexp
+
 from jax_tqdm import loop_tqdm
+
 import numpy as np
 
-from onlineEM.manifold import (norm,
-                               inner_product,
-                               transport,
-                               beta_polak_ribiere,
-                               riemannian_gradient,
-                               line_search)
 
+from onlineEM.manifold import (beta_polak_ribiere,
+                               inner_product,
+                               line_search,
+                               norm,
+                               riemannian_gradient,
+                               transport)
 from onlineEM.root_finding import brentq
 
 from sklearn.mixture import GaussianMixture
-
-from functools import partial
 
 warnings.filterwarnings("ignore")
 
@@ -73,6 +75,11 @@ def _u_tilde(alpha, beta):
     return digamma(alpha) - jnp.log(beta)
 
 
+def fill_diagonal(a, val):
+    i, j = jnp.diag_indices(min(a.shape[-2:]))
+    return a.at[..., i, j].set(val)
+
+
 @partial(vmap, in_axes=(0, 0, None, None, None))
 def update_stat(y, t, params, stat, gam):
     alpha, beta = compute_alpha_beta(y, params)
@@ -83,17 +90,14 @@ def update_stat(y, t, params, stat, gam):
 
     y_mat = jnp.einsum('i,j->ij', y, y)
 
-    new_stat = stat.copy()
-    new_stat['s0'] = gam * t + (1 - gam) * stat['s0']
-    new_stat['s1'] = gam * jnp.einsum('ij,k->ijk',
-                                      t_u, y) + (1 - gam) * stat['s1']
-    new_stat['S2'] = gam * (jnp.einsum('ij,kl->ijkl',
-                                       t_u, y_mat) + 1e-6) \
-        + (1 - gam) * stat['S2']
-    new_stat['s3'] = gam * t_u + (1 - gam) * stat['s3']
-    new_stat['s4'] = gam * t_u_tilde + (1 - gam) * stat['s4']
+    stat['s0'] = gam * t + (1 - gam) * stat['s0']
+    stat['s1'] = gam * jnp.einsum('ij,k->ijk', t_u, y) + (1 - gam) * stat['s1']
+    stat['S2'] = gam * (jnp.einsum('ij,kl->ijkl', t_u, y_mat)) + \
+        (1 - gam) * stat['S2']
+    stat['s3'] = gam * t_u + (1 - gam) * stat['s3']
+    stat['s4'] = gam * t_u_tilde + (1 - gam) * stat['s4']
 
-    return new_stat
+    return stat
 
 
 def update_pi(stat):
@@ -109,8 +113,8 @@ def update_mu(params, stat):
 
 def update_A(v, params, stat):
     tmp = jnp.einsum('kjm,kmji->kmi', params['D'], stat['S2'])
-    tmp = jnp.einsum('kmi,kim->km', tmp, params['D']) 
-    return tmp - v ** 2 / stat['s3']
+    tmp = jnp.einsum('kmi,kim->km', tmp, params['D'])
+    return tmp - v ** 2 / stat['s3'] + 1e-6
 
 
 @partial(vmap, in_axes=({'s0': None, 's1': None, 'S2': None, 's3': 0,
@@ -208,19 +212,29 @@ def update_params(params, stat, N, k, polyak):
 
     fact_polyak = 1 / (N - polyak + 1)
     pi = update_pi(stat_updt)
-    params['pi'] = jax.lax.cond(k >= polyak, lambda x: (1 - fact_polyak) * params['pi'] + fact_polyak * x, lambda x: x, pi)
+    params['pi'] = jax.lax.cond(k >= polyak,
+                                lambda x: (1 - fact_polyak) * params['pi'] +
+                                fact_polyak * x, lambda x: x, pi)
 
     D = update_D(params, stat_updt)
-    params['D'] = jax.lax.cond(k >= polyak, lambda x: (1 - fact_polyak) * params['D'] + fact_polyak * x, lambda x: x, D)
+    params['D'] = jax.lax.cond(k >= polyak,
+                               lambda x: (1 - fact_polyak) * params['D'] +
+                               fact_polyak * x, lambda x: x, D)
 
     mu, v = update_mu(params, stat_updt)
-    params['mu'] = jax.lax.cond(k >= polyak, lambda x: (1 - fact_polyak) * params['mu'] + fact_polyak * x, lambda x: x, mu)
+    params['mu'] = jax.lax.cond(k >= polyak,
+                                lambda x: (1 - fact_polyak) * params['mu'] +
+                                fact_polyak * x, lambda x: x, mu)
 
     A = update_A(v, params, stat_updt)
-    params['A'] = jax.lax.cond(k >= polyak, lambda x: (1 - fact_polyak) * params['A'] + fact_polyak * x, lambda x: x, A)
+    params['A'] = jax.lax.cond(k >= polyak,
+                               lambda x: (1 - fact_polyak) * params['A'] +
+                               fact_polyak * x, lambda x: x, A)
 
     nu = update_nu(stat_updt)
-    params['nu'] = jax.lax.cond(k >= polyak, lambda x: (1 - fact_polyak) * params['nu'] + fact_polyak * x, lambda x: x, nu)
+    params['nu'] = jax.lax.cond(k >= polyak,
+                                lambda x: (1 - fact_polyak) * params['nu'] +
+                                fact_polyak * x, lambda x: x, nu)
 
     return params
 
@@ -333,26 +347,3 @@ def BIC(X, params):
                  params['A'], params['D'], params['nu']).sum()
     p = n_components * (1 + (n_features * (n_features + 5)) / 2) - 1
     return - 2 * L + p * jnp.log(N)
-
-
-def sample_mst(N, muk, Ak, Dk, nuk, key):
-    M = nuk.shape[0]
-    X = jax.random.normal(key, shape=(N, M))
-    W = jax.random.gamma(key, nuk, shape=(N, M))
-    X /= jnp.sqrt(W)
-    matAk = jnp.diag(jnp.sqrt(Ak))
-    coef = Dk@matAk
-    return muk + jnp.einsum('ij,kj->ki', coef, X)
-
-
-def sample_mmst(N, weights, means, A, D, nu, key):
-    samples = []
-    cluster = []
-    for k in range(len(weights)):
-        N_tmp = int(N*weights[k])
-        samples.append(sample_mst(N_tmp, means[k], A[k], D[k], nu[k], key))
-        cluster += [k] * N_tmp
-    samples = jnp.concatenate(samples)
-    shuffle = jax.random.permutation(key, N)
-    return samples[shuffle], jnp.array(cluster)[shuffle]
-
