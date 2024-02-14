@@ -293,7 +293,6 @@ def fit(X, n_components, M, N, batch_size, polyak):
     params_polyak = _fit(X, X_idx, M, N, polyak, params, params_polyak)
     return params_polyak
 
-
 @jit
 def predict(X, params):
     t = posterior(X, params)
@@ -303,23 +302,14 @@ def predict(X, params):
 @jit
 @partial(vmap, in_axes=(0, None))
 def log_like(X, params):
-    return logsumexp(mmst_logpdf(X, params['pi'],
-                                 params['mu'],
-                                 params['A'],
-                                 params['D'],
-                                 params['nu']))
-
+    return logsumexp(mmst_logpdf(X, params))
 
 @jit
 @partial(vmap, in_axes=(0, None))
 def weights_mmst(X, params):
-    alpha, beta = compute_alpha_beta(X, params['mu'],
-                                     params['A'],
-                                     params['D'],
-                                     params['nu'])
+    alpha, beta = compute_alpha_beta(X, params)
     u = _u(alpha, beta)
-    tmp = mmst_logpdf(X, params['pi'], params['mu'],
-                      params['A'], params['D'], params['nu'])
+    tmp = mmst_logpdf(X, params)
     t = jnp.exp(tmp - logsumexp(tmp, axis=0))
     w = jnp.einsum('k,ki->i', t, u)
     return jnp.max(w)
@@ -328,7 +318,6 @@ def weights_mmst(X, params):
 def BIC(X, params):
     N = X.shape[0]
     n_components, n_features = params['mu'].shape
-    L = log_like(X, params['pi'], params['mu'],
-                 params['A'], params['D'], params['nu']).sum()
+    L = log_like(X, params).sum()
     p = n_components * (1 + (n_features * (n_features + 5)) / 2) - 1
     return - 2 * L + p * jnp.log(N)
